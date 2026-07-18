@@ -425,6 +425,32 @@ class PollConfigTests(unittest.TestCase):
                         config={"poll": {"action": "deny"}})
         self.assertEqual(d, "ask")
         self.assertIn("override acknowledged", r)
+        # The reason string is echoed for the audit trail, not just its
+        # presence recorded.
+        self.assertIn("demo-run", r)
+
+    def test_override_reason_multiword_echoed(self):
+        d, r = run_hook(
+            "FOREGROUND_GUARD_OVERRIDE='needs live tail' gh run watch 123",
+            config={"poll": {"action": "deny"}})
+        self.assertEqual(d, "ask")
+        self.assertIn("needs live tail", r)
+
+    def test_override_empty_reason_still_downgrades(self):
+        # Present-but-empty override still downgrades (unchanged behavior),
+        # and emits no dangling parenthetical for the missing reason.
+        d, r = run_hook("FOREGROUND_GUARD_OVERRIDE= gh run watch 123",
+                        config={"poll": {"action": "deny"}})
+        self.assertEqual(d, "ask")
+        self.assertIn("override acknowledged", r)
+        self.assertNotIn("()", r)
+
+    def test_no_override_reason_when_absent(self):
+        # No override prefix: hard deny, and no override-acknowledged text.
+        d, r = run_hook("gh run watch 123",
+                        config={"poll": {"action": "deny"}})
+        self.assertEqual(d, "deny")
+        self.assertNotIn("override acknowledged", r)
 
     def test_extra_watch_pattern(self):
         cfg = {"poll": {"extra_watch_patterns": [r"^mytool\s+follow\b"]}}

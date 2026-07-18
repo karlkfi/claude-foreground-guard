@@ -434,7 +434,8 @@ def strip_head(argv, state):
     segment so the blocking command underneath is classified, not the
     wrapper. Side effects on `state`:
       * 'loop'            — a while/until/for keyword led the segment
-      * 'override'        — a FOREGROUND_GUARD_OVERRIDE= prefix was seen
+      * 'override'        — the reason from a FOREGROUND_GUARD_OVERRIDE=<reason>
+                            prefix (a str, possibly empty; None when unseen)
       * 'timeout_wrapped' — (per-segment, reset by caller) the segment is
                             wrapped in `timeout N ...`: an explicit bound,
                             which exempts it from Class A (allow-through)."""
@@ -448,7 +449,7 @@ def strip_head(argv, state):
         elif ASSIGNMENT_RE.match(argv[0]):
             name, _, _val = argv[0].partition('=')
             if name == 'FOREGROUND_GUARD_OVERRIDE':
-                state['override'] = True
+                state['override'] = _val
             argv = argv[1:]
         elif head == 'sudo':
             argv = argv[1:]
@@ -463,7 +464,7 @@ def strip_head(argv, state):
                 elif ASSIGNMENT_RE.match(argv[0]):
                     name, _, _val = argv[0].partition('=')
                     if name == 'FOREGROUND_GUARD_OVERRIDE':
-                        state['override'] = True
+                        state['override'] = _val
                     argv = argv[1:]
                 else:
                     break
@@ -594,9 +595,9 @@ def analyze_class_a(raw, cfg, depth=0):
     poll loop can't ride past the guard; `bash some-script.sh` stays opaque
     (no script-file inspection)."""
     findings = []
-    state = {'loop': False, 'override': False}
+    state = {'loop': False, 'override': None}
     if depth > 3:
-        return findings, False
+        return findings, None
 
     raw = strip_heredoc_bodies(raw)
 
@@ -604,11 +605,11 @@ def analyze_class_a(raw, cfg, depth=0):
     # subshell or loop): nothing here blocks the main thread.
     stripped = raw.rstrip()
     if stripped.endswith('&') and not stripped.endswith('&&'):
-        return findings, False
+        return findings, None
 
     tokens = tokenize(raw)
     if tokens is None:
-        return findings, False  # unparseable: fail-open, defer
+        return findings, None  # unparseable: fail-open, defer
 
     matchers = watch_matchers(cfg)
     exempts = exempt_matchers(cfg)
@@ -645,12 +646,14 @@ def analyze_class_a(raw, cfg, depth=0):
             if body:
                 sub_f, sub_o = analyze_class_a(body, cfg, depth + 1)
                 findings += sub_f
-                state['override'] = state['override'] or sub_o
+                if state['override'] is None:
+                    state['override'] = sub_o
             continue
         if head == 'eval':
             sub_f, sub_o = analyze_class_a(' '.join(argv[1:]), cfg, depth + 1)
             findings += sub_f
-            state['override'] = state['override'] or sub_o
+            if state['override'] is None:
+                state['override'] = sub_o
             continue
         # Basename the head so `/usr/bin/tail -f` still matches `^tail`.
         seg_str = ' '.join([head] + argv[1:])
@@ -724,7 +727,7 @@ def main():
 
     cfg = load_config()
     findings = []
-    override = False
+    override = None
 
     if cfg['poll_enabled']:
         findings, override = analyze_class_a(command, cfg)
@@ -754,11 +757,13 @@ def main():
             reasons.append(reason)
     reason = ' | '.join(reasons[:3])
 
-    if severity == DENY and override:
+    if severity == DENY and override is not None:
         severity = ASK
+        shown = override.strip()
+        note = ' (%s)' % shown if shown else ''
         reason = ('foreground-guard override acknowledged '
-                  '(FOREGROUND_GUARD_OVERRIDE is set) — downgraded from deny '
-                  'to a confirmation prompt. ' + reason)
+                  '(FOREGROUND_GUARD_OVERRIDE is set%s) — downgraded from deny '
+                  'to a confirmation prompt. ' % note + reason)
 
     decision = 'deny' if severity == DENY else 'ask'
     # In bypassPermissions / full-auto mode there is no one to answer an ask;
