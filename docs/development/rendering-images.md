@@ -102,10 +102,10 @@ These bite when editing the SVG masters:
   (non-breaking space), not plain spaces — XML collapses leading/interior
   whitespace in text content, so plain spaces render inconsistently or vanish.
 - **Keep the longest terminal line inside the panel.** The social preview's
-  third row (the `make test-race … # Class B …` line) is the widest; at 23px
-  Menlo the panel fits ~72 monospace chars. When editing a command or its
-  annotation, re-render and confirm the last character clears the panel's right
-  border rather than clipping.
+  third row (the `make test-race … # slow run → raise the call timeout …` line)
+  is the widest; at 23px Menlo the panel fits ~72 monospace chars. When editing
+  a command or its annotation, re-render and confirm the last character clears
+  the panel's right border rather than clipping.
 
 ## Publishing the social preview
 

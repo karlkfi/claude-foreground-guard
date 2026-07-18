@@ -68,7 +68,7 @@
       <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
       <text x="44" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
     </g>
-    <text x="218" y="382" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>gh run <tspan fill="#e3b341" font-weight="700">watch</tspan><tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# Class A · foreground poll</tspan></text>
+    <text x="218" y="382" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>gh run <tspan fill="#e3b341" font-weight="700">watch</tspan><tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# foreground poll → run in background</tspan></text>
 
     <!-- row 3: slow command, inadequate timeout (Class B) -> ask -->
     <g transform="translate(96,456)">
@@ -78,11 +78,11 @@
       <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
       <text x="44" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
     </g>
-    <text x="218" y="482" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>make test-race<tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# Class B · slow, timeout 2m &lt; needs 8m</tspan></text>
+    <text x="218" y="482" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>make test-race<tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# slow run → raise the call timeout past 2m</tspan></text>
   </g>
 
   <!-- caption -->
   <text x="640" y="586" text-anchor="middle" font-size="22" font-weight="500" fill="#c9d1d9">
-    A time guard, not a wall: foreground <tspan fill="#e3b341" font-weight="700">polls</tspan> and under-timed <tspan fill="#e3b341" font-weight="700">slow runs</tspan> prompt; everything else <tspan fill="#3fb950" font-weight="700">defers</tspan>.
+    Keep the main thread moving: <tspan fill="#e3b341" font-weight="700">background</tspan> the poll, give slow runs their <tspan fill="#e3b341" font-weight="700">timeout</tspan> — everything else <tspan fill="#3fb950" font-weight="700">defers</tspan>.
   </text>
 </svg>
