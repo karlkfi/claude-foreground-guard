@@ -272,17 +272,22 @@ session; `FOREGROUND_GUARD_CONFIG=<path>` adds a config file;
 
 ## Friction report
 
-Run `/friction-report` to see where the guard's prompts land. It re-reads the
-decisions Claude Code already recorded in your local session transcripts (no
-telemetry — see [PRIVACY.md](PRIVACY.md)) and ranks them, so you can tell in one
-command whether the friction is mostly foreground watching, `sleep`-polling, or
-slow commands hitting an inadequate timeout.
+Run `/foreground-guard:friction-report` to see where the guard's prompts land.
+It re-reads the decisions Claude Code already recorded in your local session
+transcripts (no telemetry — see [PRIVACY.md](PRIVACY.md)) and ranks them, so you
+can tell in one command whether the friction is mostly foreground watching,
+`sleep`-polling, or slow commands hitting an inadequate timeout.
 
 ```
-/friction-report                      # last 7 days
-/friction-report --since 24h --repo gateway
-/friction-report --json               # machine-readable
+/foreground-guard:friction-report                      # last 7 days
+/foreground-guard:friction-report --since 24h --repo gateway
+/foreground-guard:friction-report --json               # machine-readable
 ```
+
+The `foreground-guard:` prefix is worth keeping: the companion guards
+([prod-guard](#companion-plugins), workspace-guard) each ship their own
+`friction-report`, so the bare `/friction-report` is ambiguous when more than
+one is installed.
 
 Prompts are grouped into a stable category taxonomy, each mapping to one fix:
 
