@@ -593,7 +593,10 @@ class WiringTests(unittest.TestCase):
         cmd = entries[0]["hooks"][0]["command"]
         self.assertIn("bash-foreground-guard.py", cmd)
         rel = cmd.split("${CLAUDE_PLUGIN_ROOT}/")[1].rstrip('"')
-        self.assertTrue((REPO / rel).is_file(), "hook script missing: %s" % rel)
+        script = REPO / rel
+        self.assertTrue(script.is_file(), "hook script missing: %s" % rel)
+        self.assertTrue(os.access(script, os.X_OK),
+                        "hook script must be executable: %s" % rel)
 
     def test_plugin_and_marketplace_agree(self):
         with open(REPO / ".claude-plugin" / "plugin.json",
