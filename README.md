@@ -198,7 +198,11 @@ claude plugin update foreground-guard@foreground-guard
 Matching is anchored to the tool name, so `grep -f patterns.txt`,
 `git log --follow`, and `-f` flags on unrelated tools never match. The hook
 recurses into quoted `bash -c '...'` and `eval ...` bodies (bounded), but
-`bash some-script.sh` stays opaque — no script-file inspection.
+`bash some-script.sh` stays opaque — no script-file inspection. A repo that
+hits a false-positive on a specific built-in watch form can quiet just that
+one with a `poll.exempt_watch_patterns` allowlist entry (exemptions win over
+matches) instead of turning off all of Class A — see
+[Configuration](#configuration).
 
 **Class B — slow-command registry** (config-only, ships empty): regex
 patterns mapped to a minimum timeout in ms. When a matched command would run
@@ -235,6 +239,7 @@ additively.
     "enabled": true,
     "action": "ask",
     "extra_watch_patterns": ["^mytool\\s+follow\\b"],
+    "exempt_watch_patterns": ["^gh\\s+run\\s+watch\\b"],
     "sleep_floor_seconds": 10
   },
   "slow": {
@@ -254,6 +259,7 @@ additively.
 | `poll.enabled` | `true` | Class A on/off (switch off as the harness subsumes it) |
 | `poll.action` | `"ask"` | `"deny"` escalates Class A to a hard block (override-able) |
 | `poll.extra_watch_patterns` | `[]` | extra regexes matched against each wrapper-stripped command segment |
+| `poll.exempt_watch_patterns` | `[]` | allowlist regexes over the same segment string; a match suppresses the watch/follow detection (exemptions win over matches) — quiet a false-positive built-in without disabling all of Class A |
 | `poll.sleep_floor_seconds` | `10` | bare `sleep N` prompts at or above this |
 | `slow.enabled` | `true` | Class B on/off |
 | `slow.commands` | `{}` | regex (searched in the raw command) → minimum timeout ms |

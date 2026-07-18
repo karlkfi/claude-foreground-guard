@@ -88,6 +88,7 @@ def load_config():
         'poll_enabled': True,
         'poll_action': 'ask',          # 'ask' | 'deny' (config may escalate)
         'extra_watch_patterns': [],    # additive regexes over a segment string
+        'exempt_watch_patterns': [],   # additive allowlist; suppresses matches
         'sleep_floor_seconds': DEFAULT_SLEEP_FLOOR_SECONDS,
         'slow_enabled': True,
         'slow_commands': {},           # {regex: min_timeout_ms}, additive
@@ -111,6 +112,10 @@ def load_config():
             if isinstance(pats, list):
                 cfg['extra_watch_patterns'] += [p for p in pats
                                                 if isinstance(p, str)]
+            exempt = poll.get('exempt_watch_patterns')
+            if isinstance(exempt, list):
+                cfg['exempt_watch_patterns'] += [p for p in exempt
+                                                 if isinstance(p, str)]
             floor = poll.get('sleep_floor_seconds')
             if isinstance(floor, (int, float)) and not isinstance(floor, bool):
                 cfg['sleep_floor_seconds'] = floor
@@ -173,6 +178,22 @@ def watch_matchers(cfg):
         try:
             out.append((pat, re.compile(pat),
                         'take one non-blocking snapshot instead'))
+        except re.error:
+            continue
+    return out
+
+
+def exempt_matchers(cfg):
+    """Compiled allowlist regexes over the wrapper-stripped segment string.
+    A segment matching any of these is exempt from Class A watch/follow
+    detection — exemptions win over matches, mirroring prod-guard's
+    `classify()` suppression precedence, so a repo can quiet a specific
+    built-in watch pattern that false-positives without disabling all of
+    Class A. A broken pattern loses itself, not the list."""
+    out = []
+    for pat in cfg['exempt_watch_patterns']:
+        try:
+            out.append(re.compile(pat))
         except re.error:
             continue
     return out
@@ -590,6 +611,7 @@ def analyze_class_a(raw, cfg, depth=0):
         return findings, False  # unparseable: fail-open, defer
 
     matchers = watch_matchers(cfg)
+    exempts = exempt_matchers(cfg)
     floor = cfg['sleep_floor_seconds']
 
     # Per-segment classification. kind: 'sleep' | 'cmd' | None (empty/opaque).
@@ -632,6 +654,11 @@ def analyze_class_a(raw, cfg, depth=0):
             continue
         # Basename the head so `/usr/bin/tail -f` still matches `^tail`.
         seg_str = ' '.join([head] + argv[1:])
+        # Allowlist wins over the watch/follow registry: a segment matching
+        # an exempt pattern is quieted (a repo silencing a false-positive
+        # built-in without disabling all of Class A).
+        if any(rx.search(seg_str) for rx in exempts):
+            continue
         for label, rx, alt in matchers:
             if rx.search(seg_str):
                 findings.append(finding_watch(cfg, seg_str, label, alt))
