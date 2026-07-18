@@ -303,6 +303,12 @@ The script runs standalone too:
 `python3 scripts/friction-report.py --plugin all` reports every sibling guard's
 decisions found in the transcripts.
 
+For the "don't just show me the numbers, help me fix them" case, the
+**`reduce-foreground-guard-prompts`** skill diagnoses the friction — grounding
+itself in that same report — maps each category to its fix, and offers a
+`CLAUDE.md` playbook. Ask Claude "why am I getting so many foreground-guard
+prompts?" to trigger it.
+
 ## The override escape hatch
 
 When config escalates Class A to `deny`, a genuinely-intentional foreground
