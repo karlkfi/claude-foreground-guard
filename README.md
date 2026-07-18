@@ -41,6 +41,7 @@ Everything else passes through silently, so your normal permissions apply.
 - [Covered forms](#covered-forms)
 - [Exemptions](#exemptions)
 - [Configuration](#configuration)
+- [Friction report](#friction-report)
 - [The override escape hatch](#the-override-escape-hatch)
 - [Soundness: never `allow`](#soundness-never-allow)
 - [Limitations](#limitations)
@@ -268,6 +269,39 @@ additively.
 Environment variables: `FOREGROUND_GUARD_DISABLE=1` turns the hook off for a
 session; `FOREGROUND_GUARD_CONFIG=<path>` adds a config file;
 `FOREGROUND_GUARD_DEBUG=1` re-raises instead of failing open (development).
+
+## Friction report
+
+Run `/foreground-guard:friction-report` to see where the guard's prompts land.
+It re-reads the decisions Claude Code already recorded in your local session
+transcripts (no telemetry — see [PRIVACY.md](PRIVACY.md)) and ranks them, so you
+can tell in one command whether the friction is mostly foreground watching,
+`sleep`-polling, or slow commands hitting an inadequate timeout.
+
+```
+/foreground-guard:friction-report                      # last 7 days
+/foreground-guard:friction-report --since 24h --repo gateway
+/foreground-guard:friction-report --json               # machine-readable
+```
+
+The `foreground-guard:` prefix is worth keeping: the companion guards
+([prod-guard](#companion-plugins), workspace-guard) each ship their own
+`friction-report`, so the bare `/friction-report` is ambiguous when more than
+one is installed.
+
+Prompts are grouped into a stable category taxonomy, each mapping to one fix:
+
+| Category | Class | Fix it teaches |
+| --- | --- | --- |
+| `watch` | A | one non-blocking snapshot, or `run_in_background: true` |
+| `loop-sleep` | A | one status check now; background the wait or check next turn |
+| `sandwich` | A | one status check now; background the wait or check next turn |
+| `bare-sleep` | A | skip or background the wait; do the follow-up check now |
+| `slow-timeout` | B | set an adequate `timeout:` on the call, or background it |
+
+The script runs standalone too:
+`python3 scripts/friction-report.py --plugin all` reports every sibling guard's
+decisions found in the transcripts.
 
 ## The override escape hatch
 
