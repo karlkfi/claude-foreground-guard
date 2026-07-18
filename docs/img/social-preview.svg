@@ -49,40 +49,54 @@
     <text x="640" y="199" text-anchor="middle" font-size="16" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" fill="#6e7681">PreToolUse · Bash</text>
   </g>
 
-  <!-- ===== three outcomes ===== -->
-  <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
-
-    <!-- row 1: bounded command -> defer -->
-    <g transform="translate(96,256)">
-      <rect x="0" y="0" width="100" height="36" rx="18" fill="#12261a" stroke="#238636" stroke-width="1.5"/>
-      <path d="M18 18 l5 5 l10 -12" fill="none" stroke="#3fb950" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="44" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#3fb950">defer</text>
+  <!-- ===== two guarded classes: caught command  →  the fix it names ===== -->
+  <!-- Class A: foreground poll  →  background it -->
+  <!-- ask chip -->
+  <g transform="translate(96,282)" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+    <rect x="0" y="0" width="86" height="36" rx="18" fill="#2a2210" stroke="#9e6a03" stroke-width="1.5"/>
+    <path d="M18 10 l9 15 h-18 Z" fill="none" stroke="#e3b341" stroke-width="2.4" stroke-linejoin="round"/>
+    <line x1="18" y1="16" x2="18" y2="20" stroke="#e3b341" stroke-width="2.4" stroke-linecap="round"/>
+    <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
+    <text x="38" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
+  </g>
+  <text x="200" y="309" font-size="27" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" fill="#e6edf3"><tspan fill="#7e57c2">$ </tspan>gh run <tspan fill="#e3b341" font-weight="700">watch</tspan></text>
+  <!-- transform arrow -->
+  <path d="M566 300 h60 M612 289 l15 11 l-15 11" fill="none" stroke="#a78bfa" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- fix chip: run in background -->
+  <g transform="translate(660,270)">
+    <rect x="0" y="0" width="472" height="60" rx="30" fill="#0f2418" stroke="#238636" stroke-width="1.6"/>
+    <!-- stacked-windows glyph: send to background -->
+    <g transform="translate(28,20)">
+      <rect x="8" y="6" width="22" height="16" rx="2.5" fill="#0f2418" stroke="#3fb950" stroke-width="2.4"/>
+      <rect x="0" y="0" width="22" height="16" rx="2.5" fill="#12261a" stroke="#3fb950" stroke-width="2.4"/>
     </g>
-    <text x="218" y="282" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>tail -n 50 app.log<tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# bounded read</tspan></text>
+    <text x="80" y="39" font-size="25" font-weight="600" font-family="-apple-system, sans-serif" fill="#c9d1d9">run it in the <tspan fill="#3fb950" font-weight="800">background</tspan></text>
+  </g>
 
-    <!-- row 2: foreground poll (Class A) -> ask -->
-    <g transform="translate(96,356)">
-      <rect x="0" y="0" width="100" height="36" rx="18" fill="#2a2210" stroke="#9e6a03" stroke-width="1.5"/>
-      <path d="M18 10 l9 15 h-18 Z" fill="none" stroke="#e3b341" stroke-width="2.4" stroke-linejoin="round"/>
-      <line x1="18" y1="16" x2="18" y2="20" stroke="#e3b341" stroke-width="2.4" stroke-linecap="round"/>
-      <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
-      <text x="44" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
+  <!-- Class B: slow run  →  longer timeout -->
+  <g transform="translate(96,432)" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+    <rect x="0" y="0" width="86" height="36" rx="18" fill="#2a2210" stroke="#9e6a03" stroke-width="1.5"/>
+    <path d="M18 10 l9 15 h-18 Z" fill="none" stroke="#e3b341" stroke-width="2.4" stroke-linejoin="round"/>
+    <line x1="18" y1="16" x2="18" y2="20" stroke="#e3b341" stroke-width="2.4" stroke-linecap="round"/>
+    <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
+    <text x="38" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
+  </g>
+  <text x="200" y="459" font-size="27" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" fill="#e6edf3"><tspan fill="#7e57c2">$ </tspan>make test-race</text>
+  <!-- transform arrow -->
+  <path d="M566 450 h60 M612 439 l15 11 l-15 11" fill="none" stroke="#a78bfa" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- fix chip: raise the timeout (2m -> 10m) -->
+  <g transform="translate(660,420)">
+    <rect x="0" y="0" width="472" height="60" rx="30" fill="#0f2418" stroke="#238636" stroke-width="1.6"/>
+    <!-- clock glyph -->
+    <g transform="translate(40,30)" fill="none" stroke="#3fb950" stroke-width="2.4">
+      <circle cx="0" cy="0" r="13"/>
+      <path d="M0 -7 V0 L6 5" stroke-linecap="round" stroke-linejoin="round"/>
     </g>
-    <text x="218" y="382" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>gh run <tspan fill="#e3b341" font-weight="700">watch</tspan><tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# foreground poll → run in background</tspan></text>
-
-    <!-- row 3: slow command, inadequate timeout (Class B) -> ask -->
-    <g transform="translate(96,456)">
-      <rect x="0" y="0" width="100" height="36" rx="18" fill="#2a2210" stroke="#9e6a03" stroke-width="1.5"/>
-      <path d="M18 10 l9 15 h-18 Z" fill="none" stroke="#e3b341" stroke-width="2.4" stroke-linejoin="round"/>
-      <line x1="18" y1="16" x2="18" y2="20" stroke="#e3b341" stroke-width="2.4" stroke-linecap="round"/>
-      <circle cx="18" cy="23" r="1.2" fill="#e3b341"/>
-      <text x="44" y="24" font-size="17" font-weight="700" font-family="-apple-system, sans-serif" fill="#e3b341">ask</text>
-    </g>
-    <text x="218" y="482" font-size="23" fill="#c9d1d9"><tspan fill="#7e57c2">$ </tspan>make test-race<tspan fill="#6e7681" font-size="19">&#160;&#160;&#160;# slow run → raise the call timeout past 2m</tspan></text>
+    <text x="80" y="39" font-size="25" font-weight="600" font-family="-apple-system, sans-serif" fill="#c9d1d9">timeout <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#e3b341" font-weight="700">2m</tspan> <tspan fill="#8b949e">→</tspan> <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#3fb950" font-weight="800">10m</tspan></text>
   </g>
 
   <!-- caption -->
   <text x="640" y="586" text-anchor="middle" font-size="22" font-weight="500" fill="#c9d1d9">
-    Keep the main thread moving: <tspan fill="#e3b341" font-weight="700">background</tspan> the poll, give slow runs their <tspan fill="#e3b341" font-weight="700">timeout</tspan> — everything else <tspan fill="#3fb950" font-weight="700">defers</tspan>.
+    It prompts the moment the main thread would stall — and <tspan fill="#3fb950" font-weight="700">names the fix</tspan>. Everything else defers.
   </text>
 </svg>

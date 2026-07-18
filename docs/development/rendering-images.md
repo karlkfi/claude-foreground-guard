@@ -101,11 +101,17 @@ These bite when editing the SVG masters:
   `# comment` annotations follow their command with a gap built from `&#160;`
   (non-breaking space), not plain spaces — XML collapses leading/interior
   whitespace in text content, so plain spaces render inconsistently or vanish.
-- **Keep the longest terminal line inside the panel.** The social preview's
-  third row (the `make test-race … # slow run → raise the call timeout …` line)
-  is the widest; at 23px Menlo the panel fits ~72 monospace chars. When editing
-  a command or its annotation, re-render and confirm the last character clears
-  the panel's right border rather than clipping.
+- **Keep the fix chips inside the panel.** The social preview's two rows each
+  end in a green "fix" chip (`run it in the background`, `timeout 2m → 10m`)
+  whose right edge sits at x≈1132, clearing the panel's right border at x≈1200.
+  When relabeling a chip, widen the `<rect>` and re-check that edge — a longer
+  label overflows the pill or the panel before it clips text.
+- **Non-ASCII glyphs fall back fonts.** The `→` in the timeout chip and any
+  arrows resvg can't find in the requested family emit a
+  `Fallback from … to Arial Unicode MS` warning and render from a fallback
+  face. That is harmless for a lone arrow, but keep decorative arrows as drawn
+  `<path>`s (as the two transform arrows are) rather than text glyphs so their
+  weight and color stay under your control.
 
 ## Publishing the social preview
 
