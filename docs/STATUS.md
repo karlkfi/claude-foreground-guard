@@ -10,9 +10,10 @@ the top of the Queue.
 
 ## Queue
 
+_No open items._
+
 | ID | Item | Labels | St | Sz | Notes |
 |---|---|---|---|---|---|
-| <a id="Q4"></a>Q4 | Add `reduce-foreground-guard-prompts` skill | `docs` | 🔲 | S | Model on workspace-guard's skill: run the friction report, map finding categories to fixes, offer a CLAUDE.md playbook. Has a no-report fallback, so not strictly blocked. |
 
 ## Deferred
 
