@@ -1,0 +1,543 @@
+#!/usr/bin/env python3
+"""Tests for scripts/bash-foreground-guard.py.
+
+Run with: python3 -m unittest discover tests
+     or:  python3 tests/test_foreground_guard.py
+
+Three layers:
+  * Unit tests import the module and exercise heredoc stripping,
+    tokenization, segment splitting, and sleep-duration parsing.
+  * End-to-end tests invoke the script as a subprocess with a fixture $HOME
+    and (optionally) a fixture $CLAUDE_PROJECT_DIR holding a
+    .claude/foreground-guard.json, and assert the emitted PreToolUse
+    decision: deny / ask / defer (no output).
+  * Wiring tests assert the plugin config (hooks.json, plugin.json,
+    marketplace.json) is valid and points the hook at the real script.
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from importlib import util
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SCRIPT = REPO / "scripts" / "bash-foreground-guard.py"
+
+# Filename has dashes, so import by path.
+_spec = util.spec_from_file_location("foreground_guard", SCRIPT)
+guard = util.module_from_spec(_spec)
+_spec.loader.exec_module(guard)
+
+
+def make_project(config=None):
+    """Build a synthetic project dir, optionally holding a
+    .claude/foreground-guard.json."""
+    proj = tempfile.mkdtemp(prefix="fg-guard-test-proj-")
+    if config is not None:
+        cdir = os.path.join(proj, ".claude")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "foreground-guard.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(config, f)
+    return proj
+
+
+def run_hook(command, config=None, timeout_ms=None, run_in_background=None,
+             env_extra=None, permission_mode=None, payload=None):
+    """Invoke the hook as a subprocess; return (decision, reason) or
+    (None, None) for defer. Uses a minimal, controlled environment so the
+    developer's real ~/.claude config can never leak into a test verdict."""
+    home = tempfile.mkdtemp(prefix="fg-guard-test-home-")
+    env = {
+        "HOME": home,
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "FOREGROUND_GUARD_DEBUG": "1",
+    }
+    if config is not None:
+        env["CLAUDE_PROJECT_DIR"] = make_project(config)
+    if env_extra:
+        env.update(env_extra)
+    if payload is None:
+        tool_input = {"command": command}
+        if timeout_ms is not None:
+            tool_input["timeout"] = timeout_ms
+        if run_in_background is not None:
+            tool_input["run_in_background"] = run_in_background
+        payload = {"tool_name": "Bash", "tool_input": tool_input}
+        if permission_mode:
+            payload["permission_mode"] = permission_mode
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=json.dumps(payload) if isinstance(payload, dict) else payload,
+        capture_output=True, text=True, env=env, cwd=home, timeout=30)
+    if r.returncode != 0:
+        raise AssertionError("hook crashed: %s" % r.stderr)
+    if not r.stdout.strip():
+        return None, None
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    decision = out["permissionDecision"]
+    # Invariant enforced on EVERY end-to-end call: the guard's only outputs
+    # are deny, ask, or silence. An `allow` would ride past the user's
+    # permission settings and the sibling guards.
+    assert decision in ("ask", "deny"), \
+        "guard emitted forbidden decision %r" % decision
+    return decision, out["permissionDecisionReason"]
+
+
+# ---------------------------------------------------------------------------
+# Unit tests
+# ---------------------------------------------------------------------------
+
+class HeredocStripTests(unittest.TestCase):
+    def test_body_lines_dropped(self):
+        raw = "cat <<EOF\ntail -f /var/log/syslog\nsleep 600\nEOF\necho done"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("tail -f", out)
+        self.assertNotIn("sleep 600", out)
+        self.assertIn("echo done", out)
+
+    def test_dash_variant_tab_terminator(self):
+        raw = "cat <<-END\n\tsleep 600\n\tEND\necho after"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("sleep 600", out)
+        self.assertIn("echo after", out)
+
+    def test_quoted_delimiter(self):
+        raw = "cat <<'EOF'\nwatch date\nEOF\necho after"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("watch date", out)
+        self.assertIn("echo after", out)
+
+    def test_here_string_not_a_heredoc(self):
+        raw = "grep x <<< 'sleep 600'"
+        self.assertEqual(guard.strip_heredoc_bodies(raw), raw)
+
+    def test_unterminated_swallows_to_end(self):
+        raw = "cat <<EOF\nsleep 600"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("sleep 600", out)
+
+    def test_multiple_heredocs_consume_in_order(self):
+        raw = "cat <<A <<B\nbodyA\nA\nbodyB\nB\necho after"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("bodyA", out)
+        self.assertNotIn("bodyB", out)
+        self.assertIn("echo after", out)
+
+
+class SplitSegmentTests(unittest.TestCase):
+    def segs(self, raw):
+        return guard.split_segments(guard.tokenize(raw))
+
+    def test_background_terminator(self):
+        segs = self.segs("sleep 30 & make build")
+        self.assertEqual(segs[0], (["sleep", "30"], "&"))
+        self.assertEqual(segs[1][0], ["make", "build"])
+
+    def test_redirect_does_not_split_before_ampersand(self):
+        # The `&` must terminate `./server` (redirect glued), so the
+        # startup-grace sleep isn't mistaken for a sandwiched poll.
+        segs = self.segs("./server > server.log & sleep 2; curl localhost")
+        self.assertEqual(segs[0], (["./server"], "&"))
+        self.assertEqual(segs[1][0], ["sleep", "2"])
+
+    def test_stderr_redirect_kept_in_segment(self):
+        segs = self.segs("tail -f x.log 2>&1")
+        self.assertEqual(segs[0][1], "")
+        self.assertIn("tail", segs[0][0])
+
+    def test_and_chain_is_not_background(self):
+        segs = self.segs("make lint && make test")
+        self.assertEqual(segs[0][1], "&&")
+
+
+class SleepSecondsTests(unittest.TestCase):
+    def test_plain(self):
+        self.assertEqual(guard.sleep_seconds(["sleep", "30"]), 30)
+
+    def test_gnu_suffixes_sum(self):
+        self.assertEqual(guard.sleep_seconds(["sleep", "1m", "30"]), 90)
+
+    def test_infinity(self):
+        self.assertEqual(guard.sleep_seconds(["sleep", "infinity"]),
+                         float("inf"))
+
+    def test_variable_is_unknown(self):
+        self.assertIsNone(guard.sleep_seconds(["sleep", "$N"]))
+
+    def test_fractional(self):
+        self.assertEqual(guard.sleep_seconds(["sleep", "0.5"]), 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Class A end-to-end: watch/follow forms
+# ---------------------------------------------------------------------------
+
+class WatchFormTests(unittest.TestCase):
+    ASKS = [
+        "gh pr checks --watch",
+        "gh pr checks 123 --watch --interval 5",
+        "gh run watch 456",
+        "kubectl logs -f pod/api",
+        "kubectl logs deploy/api --follow",
+        "kubectl -n prod get pods -w",
+        "kubectl get pods --watch",
+        "oc logs -f pod/api",
+        "tail -f /var/log/syslog",
+        "tail -F app.log",
+        "tail --follow=name app.log",
+        "tail -fn50 app.log",
+        "journalctl -f -u myservice",
+        "journalctl --follow",
+        "docker logs -f mycontainer",
+        "docker logs --follow mycontainer",
+        "podman logs -f c1",
+        "docker compose logs -f",
+        "watch kubectl get pods",
+        "watch -n5 date",
+        "sudo journalctl -f",
+        "stdbuf -oL tail -f app.log",
+        "echo start && gh run watch 456",
+        "bash -c 'tail -f app.log'",
+    ]
+    DEFERS = [
+        "gh pr checks 123",
+        "gh run view 456",
+        "gh run list",
+        "kubectl get pods",
+        "kubectl logs pod/api",
+        "kubectl logs pod/api --tail=100",
+        "tail -n 50 app.log",
+        "tail app.log",
+        "grep -f patterns.txt src/",
+        "git log --follow -- README.md",
+        "journalctl -n 100",
+        "docker logs --tail 100 c1",
+        "docker ps",
+        "echo 'watch out for tail -f'",
+        "make watch-docs.md",
+    ]
+
+    def test_watch_forms_ask(self):
+        for cmd in self.ASKS:
+            decision, reason = run_hook(cmd)
+            self.assertEqual(decision, "ask", "expected ask for %r" % cmd)
+            self.assertIn("foreground-guard", reason)
+            self.assertIn("run_in_background", reason)
+
+    def test_non_watch_forms_defer(self):
+        for cmd in self.DEFERS:
+            decision, _ = run_hook(cmd)
+            self.assertIsNone(decision, "expected defer for %r" % cmd)
+
+
+# ---------------------------------------------------------------------------
+# Class A end-to-end: loops, chains, sleeps
+# ---------------------------------------------------------------------------
+
+class LoopAndSleepTests(unittest.TestCase):
+    def test_while_sleep_loop_asks(self):
+        d, r = run_hook("while true; do gh pr checks 1; sleep 5; done")
+        self.assertEqual(d, "ask")
+        self.assertIn("loop", r)
+
+    def test_until_sleep_loop_asks(self):
+        d, _ = run_hook("until gh pr checks 1; do sleep 10; done")
+        self.assertEqual(d, "ask")
+
+    def test_for_sleep_loop_asks(self):
+        d, _ = run_hook("for i in 1 2 3; do curl -s x; sleep 20; done")
+        self.assertEqual(d, "ask")
+
+    def test_multiline_loop_asks(self):
+        d, _ = run_hook("while true; do\n  make status\n  sleep 5\ndone")
+        self.assertEqual(d, "ask")
+
+    def test_loop_without_sleep_defers(self):
+        d, _ = run_hook("for f in *.py; do python3 -m py_compile $f; done")
+        self.assertIsNone(d)
+
+    def test_while_read_defers(self):
+        d, _ = run_hook("while read -r line; do echo $line; done < input.txt")
+        self.assertIsNone(d)
+
+    def test_chained_repeat_with_short_sleep_asks(self):
+        d, r = run_hook("gh pr checks 1; sleep 5; gh pr checks 1")
+        self.assertEqual(d, "ask")
+        self.assertIn("repeat-with-sleep", r)
+
+    def test_leading_short_sleep_then_command_defers(self):
+        d, _ = run_hook("sleep 2 && curl localhost:8080/health")
+        self.assertIsNone(d)
+
+    def test_bare_sleep_at_floor_asks(self):
+        d, r = run_hook("sleep 10")
+        self.assertEqual(d, "ask")
+        self.assertIn("sleep", r)
+
+    def test_bare_sleep_above_floor_asks(self):
+        d, _ = run_hook("sleep 300")
+        self.assertEqual(d, "ask")
+
+    def test_bare_sleep_below_floor_defers(self):
+        d, _ = run_hook("sleep 9")
+        self.assertIsNone(d)
+
+    def test_sleep_infinity_asks(self):
+        d, _ = run_hook("sleep infinity")
+        self.assertEqual(d, "ask")
+
+    def test_sleep_unknown_duration_asks(self):
+        d, _ = run_hook("sleep $DELAY")
+        self.assertEqual(d, "ask")
+
+    def test_sleep_floor_configurable(self):
+        cfg = {"poll": {"sleep_floor_seconds": 60}}
+        d, _ = run_hook("sleep 30", config=cfg)
+        self.assertIsNone(d)
+        d, _ = run_hook("sleep 60", config=cfg)
+        self.assertEqual(d, "ask")
+
+    def test_quoted_sleep_is_data_not_command(self):
+        d, _ = run_hook("git commit -m 'sleep 30 fix'")
+        self.assertIsNone(d)
+
+    def test_ssh_remote_body_is_opaque(self):
+        d, _ = run_hook("ssh host 'sleep 30'")
+        self.assertIsNone(d)
+
+    def test_bash_dash_c_loop_recursed(self):
+        d, _ = run_hook("bash -c 'while true; do sleep 5; done'")
+        self.assertEqual(d, "ask")
+
+    def test_bash_script_file_stays_opaque(self):
+        d, _ = run_hook("bash poll-forever.sh")
+        self.assertIsNone(d)
+
+    def test_eval_body_recursed(self):
+        d, _ = run_hook("eval sleep 600")
+        self.assertEqual(d, "ask")
+
+
+# ---------------------------------------------------------------------------
+# Class A end-to-end: exemptions
+# ---------------------------------------------------------------------------
+
+class ExemptionTests(unittest.TestCase):
+    def test_run_in_background_passes_everything(self):
+        for cmd in ("gh run watch 123", "tail -f x.log", "sleep 600",
+                    "while true; do sleep 5; done"):
+            d, _ = run_hook(cmd, run_in_background=True)
+            self.assertIsNone(d, "expected defer for backgrounded %r" % cmd)
+
+    def test_trailing_ampersand_detaches(self):
+        for cmd in ("gh run watch 123 &", "tail -f x.log &",
+                    "(while true; do sleep 5; done) &",
+                    "while true; do sleep 5; done &"):
+            d, _ = run_hook(cmd)
+            self.assertIsNone(d, "expected defer for %r" % cmd)
+
+    def test_segment_ampersand_exempts_that_segment(self):
+        d, _ = run_hook("sleep 30 & make build")
+        self.assertIsNone(d)
+
+    def test_backgrounded_server_with_startup_grace_defers(self):
+        d, _ = run_hook("./server > server.log 2>&1 & sleep 2; curl -s localhost")
+        self.assertIsNone(d)
+
+    def test_timeout_wrap_allows_through(self):
+        for cmd in ("timeout 30 gh run watch 123",
+                    "timeout 60 tail -f x.log",
+                    "timeout -k 5 30 kubectl logs -f pod/x",
+                    "timeout 30 sleep 600",
+                    "timeout 300 bash -c 'while true; do sleep 5; done'"):
+            d, _ = run_hook(cmd)
+            self.assertIsNone(d, "expected defer for %r" % cmd)
+
+    def test_heredoc_body_not_parsed_as_commands(self):
+        d, _ = run_hook(
+            "cat > notes.md <<EOF\ntail -f /var/log/syslog\nsleep 600\n"
+            "while true; do sleep 5; done\nEOF")
+        self.assertIsNone(d)
+
+    def test_watch_after_heredoc_still_caught(self):
+        d, _ = run_hook("cat <<EOF\nhello\nEOF\ngh run watch 1")
+        self.assertEqual(d, "ask")
+
+    def test_disable_env(self):
+        d, _ = run_hook("gh run watch 123",
+                        env_extra={"FOREGROUND_GUARD_DISABLE": "1"})
+        self.assertIsNone(d)
+
+
+# ---------------------------------------------------------------------------
+# Class A config: enable flag, action escalation, extra patterns, hint
+# ---------------------------------------------------------------------------
+
+class PollConfigTests(unittest.TestCase):
+    def test_poll_disabled_defers(self):
+        d, _ = run_hook("gh run watch 123",
+                        config={"poll": {"enabled": False}})
+        self.assertIsNone(d)
+
+    def test_action_escalates_to_deny(self):
+        d, r = run_hook("gh run watch 123",
+                        config={"poll": {"action": "deny"}})
+        self.assertEqual(d, "deny")
+        self.assertIn("FOREGROUND_GUARD_OVERRIDE", r)
+
+    def test_override_downgrades_deny_to_ask(self):
+        d, r = run_hook("FOREGROUND_GUARD_OVERRIDE=demo-run gh run watch 123",
+                        config={"poll": {"action": "deny"}})
+        self.assertEqual(d, "ask")
+        self.assertIn("override acknowledged", r)
+
+    def test_extra_watch_pattern(self):
+        cfg = {"poll": {"extra_watch_patterns": [r"^mytool\s+follow\b"]}}
+        d, _ = run_hook("mytool follow --id 7", config=cfg)
+        self.assertEqual(d, "ask")
+        d, _ = run_hook("mytool status", config=cfg)
+        self.assertIsNone(d)
+
+    def test_hint_appended(self):
+        d, r = run_hook("gh run watch 123",
+                        config={"hint": "pr-sentinel watches PRs here"})
+        self.assertEqual(d, "ask")
+        self.assertIn("pr-sentinel watches PRs here", r)
+
+    def test_bypass_permissions_converts_ask_to_deny(self):
+        d, _ = run_hook("gh run watch 123",
+                        permission_mode="bypassPermissions")
+        self.assertEqual(d, "deny")
+
+
+# ---------------------------------------------------------------------------
+# Class B end-to-end: slow commands vs timeout
+# ---------------------------------------------------------------------------
+
+SLOW_CFG = {"slow": {"commands": {r"make test-race\b": 600000}}}
+
+
+class SlowCommandTests(unittest.TestCase):
+    def test_default_registry_is_empty(self):
+        d, _ = run_hook("make test-race")
+        self.assertIsNone(d)
+
+    def test_slow_command_default_timeout_asks(self):
+        d, r = run_hook("make test-race", config=SLOW_CFG)
+        self.assertEqual(d, "ask")
+        self.assertIn("600000", r)
+        self.assertIn("default 120000 ms timeout", r)
+        self.assertIn("run_in_background", r)
+
+    def test_slow_command_low_timeout_asks(self):
+        d, r = run_hook("make test-race", config=SLOW_CFG, timeout_ms=120000)
+        self.assertEqual(d, "ask")
+        self.assertIn("120000 ms timeout set on this call", r)
+
+    def test_slow_command_adequate_timeout_defers(self):
+        for t in (600000, 700000):
+            d, _ = run_hook("make test-race", config=SLOW_CFG, timeout_ms=t)
+            self.assertIsNone(d, "expected defer at timeout %d" % t)
+
+    def test_slow_command_backgrounded_defers(self):
+        d, _ = run_hook("make test-race", config=SLOW_CFG,
+                        run_in_background=True)
+        self.assertIsNone(d)
+
+    def test_slow_class_disabled_defers(self):
+        cfg = {"slow": {"enabled": False,
+                        "commands": {r"make test-race\b": 600000}}}
+        d, _ = run_hook("make test-race", config=cfg)
+        self.assertIsNone(d)
+
+    def test_unmatched_command_defers(self):
+        d, _ = run_hook("make build", config=SLOW_CFG)
+        self.assertIsNone(d)
+
+    def test_env_default_timeout_respected(self):
+        d, _ = run_hook("make test-race", config=SLOW_CFG,
+                        env_extra={"BASH_DEFAULT_TIMEOUT_MS": "900000"})
+        self.assertIsNone(d)
+
+    def test_pattern_anywhere_in_chain(self):
+        d, _ = run_hook("cd sub && make test-race", config=SLOW_CFG)
+        self.assertEqual(d, "ask")
+
+
+# ---------------------------------------------------------------------------
+# Robustness
+# ---------------------------------------------------------------------------
+
+class RobustnessTests(unittest.TestCase):
+    def test_non_bash_tool_defers(self):
+        d, _ = run_hook(None, payload={"tool_name": "Read",
+                                       "tool_input": {"file_path": "/x"}})
+        self.assertIsNone(d)
+
+    def test_empty_command_defers(self):
+        d, _ = run_hook("   ")
+        self.assertIsNone(d)
+
+    def test_garbage_stdin_defers(self):
+        d, _ = run_hook(None, payload="this is not json")
+        self.assertIsNone(d)
+
+    def test_unbalanced_quote_defers(self):
+        d, _ = run_hook("echo 'unterminated")
+        self.assertIsNone(d)
+
+    def test_malformed_config_still_guards(self):
+        proj = make_project()
+        cdir = os.path.join(proj, ".claude")
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "foreground-guard.json"), "w",
+                  encoding="utf-8") as f:
+            f.write("{not json")
+        d, _ = run_hook("gh run watch 123",
+                        env_extra={"CLAUDE_PROJECT_DIR": proj})
+        self.assertEqual(d, "ask")
+
+    def test_never_allow_battery(self):
+        # A sweep of everything above: whatever the decision, it is never
+        # "allow" (asserted inside run_hook on every call).
+        for cmd in (WatchFormTests.ASKS + WatchFormTests.DEFERS
+                    + ["sleep 600", "make test-race"]):
+            run_hook(cmd, config=SLOW_CFG)
+
+
+# ---------------------------------------------------------------------------
+# Wiring
+# ---------------------------------------------------------------------------
+
+class WiringTests(unittest.TestCase):
+    def test_hooks_json_points_at_script(self):
+        with open(REPO / "hooks" / "hooks.json", encoding="utf-8") as f:
+            hooks = json.load(f)
+        entries = hooks["hooks"]["PreToolUse"]
+        self.assertEqual(entries[0]["matcher"], "Bash")
+        cmd = entries[0]["hooks"][0]["command"]
+        self.assertIn("bash-foreground-guard.py", cmd)
+        rel = cmd.split("${CLAUDE_PLUGIN_ROOT}/")[1].rstrip('"')
+        self.assertTrue((REPO / rel).is_file(), "hook script missing: %s" % rel)
+
+    def test_plugin_and_marketplace_agree(self):
+        with open(REPO / ".claude-plugin" / "plugin.json",
+                  encoding="utf-8") as f:
+            plugin = json.load(f)
+        with open(REPO / ".claude-plugin" / "marketplace.json",
+                  encoding="utf-8") as f:
+            market = json.load(f)
+        self.assertEqual(plugin["name"], "foreground-guard")
+        entry = market["plugins"][0]
+        self.assertEqual(entry["name"], plugin["name"])
+        self.assertEqual(entry["version"], plugin["version"])
+        self.assertEqual(entry["source"]["repo"],
+                         "karlkfi/claude-foreground-guard")
+
+
+if __name__ == "__main__":
+    unittest.main()
