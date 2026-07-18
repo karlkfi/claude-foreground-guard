@@ -12,7 +12,6 @@ the top of the Queue.
 
 | ID | Item | Labels | St | Sz | Notes |
 |---|---|---|---|---|---|
-| <a id="Q1"></a>Q1 | Fix over-arming heredoc stripper | `bug` `parser` | 🔲 | S | Regex stripper over-arms on quoted `<<` and arithmetic `$((a<<b))`, dropping later lines and hiding a following poll. Port workspace-guard's quote/arith-aware stripper; add regression tests. |
 | <a id="Q2"></a>Q2 | Add `exempt_watch_patterns` config allowlist | `config` `feature` | 🔲 | S | Config is add-only; no way to quiet a built-in watch pattern that false-positives short of disabling all of Class A. Add an allowlist, mirroring prod-guard's `classify()` suppression precedence. |
 | <a id="Q3"></a>Q3 | Add friction-report command + script | `feature` `tests` | 🔲 | S | Fork prod-guard's `friction-report.py` + `commands/friction-report.md`; map finding signatures to categories, retarget extraction to backtick-wrapped commands. Adapt sibling tests. |
 | <a id="Q4"></a>Q4 | Add `reduce-foreground-guard-prompts` skill | `docs` | 🔲 | S | Model on workspace-guard's skill: run the friction report, map finding categories to fixes, offer a CLAUDE.md playbook. Pairs with [Q3](#Q3); has a no-report fallback, so not strictly blocked. |

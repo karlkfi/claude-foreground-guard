@@ -127,6 +127,27 @@ class HeredocStripTests(unittest.TestCase):
         self.assertNotIn("bodyB", out)
         self.assertIn("echo after", out)
 
+    def test_quoted_shift_operator_not_a_heredoc(self):
+        # `<<` inside a quoted string is not a heredoc operator: it must not
+        # arm and swallow the following foreground-poll line.
+        raw = 'echo "a << b"\ntail -f /var/log/syslog'
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertIn("tail -f", out)
+
+    def test_arithmetic_shift_not_a_heredoc(self):
+        # `$((a<<b))` left shift must not be mistaken for a heredoc start.
+        raw = "echo $((1<<4))\ntail -f /var/log/syslog"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertIn("1<<4", out)
+        self.assertIn("tail -f", out)
+
+    def test_real_heredoc_still_stripped(self):
+        # A genuine heredoc body is still dropped, terminator and all.
+        raw = "cat <<EOF\nwatch date\nEOF\ntail -f /var/log/syslog"
+        out = guard.strip_heredoc_bodies(raw)
+        self.assertNotIn("watch date", out)
+        self.assertIn("tail -f", out)
+
 
 class SplitSegmentTests(unittest.TestCase):
     def segs(self, raw):
@@ -365,6 +386,16 @@ class ExemptionTests(unittest.TestCase):
 
     def test_watch_after_heredoc_still_caught(self):
         d, _ = run_hook("cat <<EOF\nhello\nEOF\ngh run watch 1")
+        self.assertEqual(d, "ask")
+
+    def test_poll_after_quoted_shift_still_caught(self):
+        # The `<<` in the quoted string must not over-arm and hide the poll.
+        d, _ = run_hook('echo "a << b"\ngh run watch 1')
+        self.assertEqual(d, "ask")
+
+    def test_poll_after_arithmetic_shift_still_caught(self):
+        # The `<<` in `$((1<<4))` must not over-arm and hide the poll.
+        d, _ = run_hook("echo $((1<<4))\ngh run watch 1")
         self.assertEqual(d, "ask")
 
     def test_disable_env(self):

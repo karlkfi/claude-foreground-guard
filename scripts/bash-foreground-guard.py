@@ -182,37 +182,160 @@ def watch_matchers(cfg):
 # Shell parsing: heredoc stripping, tokenization, segment splitting
 # ---------------------------------------------------------------------------
 
-# `<<` or `<<-` (not `<<<`) followed by an optionally quoted delimiter word.
-HEREDOC_START_RE = re.compile(
-    r"(?<!<)<<(?!<)(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z0-9_]*))")
+# Characters after which an unquoted `#` starts a comment (a word boundary),
+# and after which `<<` is at a word start. Mirrors bash's comment rule.
+COMMENT_PRECEDERS = frozenset(' \t\n;|&()<>')
 
 
-def strip_heredoc_bodies(raw):
-    """Remove heredoc body lines from the raw command text BEFORE any
+def _skip_balanced_parens(text, start):
+    """Step over a run of balanced parens beginning at ``start`` (a ``(``).
+
+    Returns the index just past the matching close, or end-of-string on
+    imbalance. Used to skip ``((…))`` / ``$((…))`` arithmetic, whose ``<<`` is
+    a left shift, not a heredoc redirection."""
+    i, n, depth = start, len(text), 0
+    while i < n:
+        c = text[i]
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _consume_heredoc_body(text, i, delim, strip_tabs):
+    """Skip a heredoc body starting at ``i`` (first char after the command
+    line's newline) up to and including the terminator line, or end-of-input.
+
+    Body lines are compared RAW — no quote/expansion parsing — so an
+    apostrophe, an unbalanced quote, `</div>`, or `func(` in the body can
+    never affect the scan. A line equals the terminator when it is exactly
+    ``delim`` (for ``<<-``, after stripping leading tabs). Returns the index
+    just past the terminator's newline; on an unterminated body,
+    ``len(text)`` (matching bash, which swallows to end-of-input)."""
+    n = len(text)
+    while i < n:
+        j = i
+        while j < n and text[j] != '\n':
+            j += 1
+        line = text[i:j]
+        if (line.lstrip('\t') if strip_tabs else line) == delim:
+            return j + 1 if j < n else n          # drop the terminator line
+        i = j + 1 if j < n else n                 # drop this body line
+    return n
+
+
+def strip_heredoc_bodies(cmd):
+    """Remove heredoc body text from the raw command string BEFORE any
     tokenization, so body text (scripts, HTML, prose) is never parsed as
     command segments — the sibling-parser bug class of workspace-guard #83.
 
-    Line-oriented, mirroring bash: after a line that arms `<<TAG` (or
-    `<<-TAG`, whose terminator may be tab-indented), subsequent lines are
-    body and are dropped until a line consisting of exactly the delimiter.
-    Multiple heredocs on one line consume consecutive bodies in order; an
-    unterminated body swallows to end-of-input, matching bash. A `<<` inside
-    quotes can over-arm and drop trailing lines — for this guard that only
-    ever hides segments (fewer findings, a defer), never fabricates one."""
-    out_lines = []
-    pending = []  # [(delimiter, tab_strip)]
-    for line in raw.split('\n'):
-        if pending:
-            delim, tab_strip = pending[0]
-            check = line.lstrip('\t') if tab_strip else line
-            if check == delim:
-                pending.pop(0)
-            continue  # drop body and terminator lines
-        for m in HEREDOC_START_RE.finditer(line):
-            delim = m.group(2) or m.group(3) or m.group(4)
-            pending.append((delim, m.group(1) == '-'))
-        out_lines.append(line)
-    return '\n'.join(out_lines)
+    Bash slurps everything between the newline after a `<<WORD` / `<<-WORD`
+    redirection and a line equal to WORD as literal stdin data. That body can
+    hold anything — none of it shell syntax — so it is dropped up front.
+
+    The scan is quote- and arithmetic-aware so a `<<` that is NOT a heredoc
+    operator never arms a bogus delimiter (which would drop the trailing lines
+    and hide a real foreground-poll command from the guard):
+      * a `<<` inside single/double quotes (`echo "a << b"`) is copied
+        verbatim, not treated as a heredoc start;
+      * arithmetic `((a<<b))` / `$((a<<b))` regions are copied verbatim —
+        their `<<` is a left shift, not a redirection;
+      * `<<<` here-strings are a distinct operator and never match;
+      * an unquoted `#` comment is skipped for `<<` detection.
+    A `<<` with no delimiter word arms nothing; multiple heredocs on one line
+    consume consecutive bodies in order; an unterminated body swallows to
+    end-of-input — all matching bash."""
+    out = []
+    i, n = 0, len(cmd)
+    in_single = in_double = False
+    last = ''                                     # last emitted char (word start)
+    pending = []                                  # (delim, strip_tabs) in order
+    while i < n:
+        c = cmd[i]
+        if in_single:
+            out.append(c); last = c
+            if c == "'":
+                in_single = False
+            i += 1
+            continue
+        if in_double:
+            if c == '\\' and i + 1 < n:
+                out.append(c); out.append(cmd[i+1]); last = cmd[i+1]; i += 2
+                continue
+            out.append(c); last = c
+            if c == '"':
+                in_double = False
+            i += 1
+            continue
+        if c == '\\' and i + 1 < n:
+            out.append(c); out.append(cmd[i+1]); last = cmd[i+1]; i += 2
+            continue
+        if c == "'":
+            in_single = True; out.append(c); last = c; i += 1
+            continue
+        if c == '"':
+            in_double = True; out.append(c); last = c; i += 1
+            continue
+        if c == '#' and (last == '' or last in COMMENT_PRECEDERS):
+            while i < n and cmd[i] != '\n':       # comment: no `<<` detection
+                out.append(cmd[i]); i += 1
+            last = ')'                            # arbitrary non-word-start char
+            continue
+        if c == '(' and i + 1 < n and cmd[i+1] == '(':
+            end = _skip_balanced_parens(cmd, i)   # `((…))` / `$((…))` arithmetic
+            out.append(cmd[i:end]); last = ')'; i = end
+            continue
+        if c == '<' and i + 1 < n and cmd[i+1] == '<':
+            if i + 2 < n and cmd[i+2] == '<':     # `<<<` here-string, not heredoc
+                out.append('<<<'); last = '<'; i += 3
+                continue
+            out.append('<<'); i += 2
+            strip_tabs = False
+            if i < n and cmd[i] == '-':
+                out.append('-'); i += 1; strip_tabs = True
+            while i < n and cmd[i] in ' \t':      # optional space before delim
+                out.append(cmd[i]); i += 1
+            delim_chars = []
+            while i < n and cmd[i] not in ' \t\n;|&()<>':
+                d = cmd[i]
+                if d == "'":
+                    out.append(d); i += 1
+                    while i < n and cmd[i] != "'":
+                        delim_chars.append(cmd[i]); out.append(cmd[i]); i += 1
+                    if i < n:
+                        out.append(cmd[i]); i += 1
+                elif d == '"':
+                    out.append(d); i += 1
+                    while i < n and cmd[i] != '"':
+                        if cmd[i] == '\\' and i + 1 < n:
+                            delim_chars.append(cmd[i+1])
+                            out.append(cmd[i]); out.append(cmd[i+1]); i += 2
+                            continue
+                        delim_chars.append(cmd[i]); out.append(cmd[i]); i += 1
+                    if i < n:
+                        out.append(cmd[i]); i += 1
+                elif d == '\\' and i + 1 < n:
+                    delim_chars.append(cmd[i+1])
+                    out.append(d); out.append(cmd[i+1]); i += 2
+                else:
+                    delim_chars.append(d); out.append(d); i += 1
+            delim = ''.join(delim_chars)
+            if delim:
+                pending.append((delim, strip_tabs))
+            last = 'x'
+            continue
+        if c == '\n':
+            out.append('\n'); last = '\n'; i += 1
+            while pending and i < n:
+                delim, strip_tabs = pending.pop(0)
+                i = _consume_heredoc_body(cmd, i, delim, strip_tabs)
+            continue
+        out.append(c); last = c; i += 1
+    return ''.join(out)
 
 
 PUNCT_CHARS = frozenset(';()<>|&')
