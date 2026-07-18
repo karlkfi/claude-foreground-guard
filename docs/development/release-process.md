@@ -2,6 +2,17 @@
 
 A release is three artifacts that must agree: the **version string** (in two files), an **annotated git tag**, and a **GitHub Release**. This doc is the checklist for producing all three consistently. Releases are the one place where a commit lands on `main` without a PR — that exception is deliberate and scoped to the version bump only (see §The direct-to-main exception).
 
+## The fast path: `scripts/cut-release.sh`
+
+`scripts/cut-release.sh` automates every step below with the same guardrails, and refuses each anti-pattern in §Anti-patterns (dirty tree, non-fast-forward `main`, one-sided/backwards bump, red tests, pre-existing tag). Run it from a checkout level with `origin/main`:
+
+```
+scripts/cut-release.sh --dry-run minor   # preview the plan + generated notes, mutate nothing
+scripts/cut-release.sh minor             # or patch | major | an explicit X.Y.Z
+```
+
+It bumps both files, commits, pushes to `main`, tags, and publishes the Release — pausing once for confirmation and once (in `$EDITOR`) to curate auto-generated notes. Choosing the bump level is still yours (see step 3). The rest of this doc is the manual procedure it encodes — the reference when the script can't run or you need to do a step by hand.
+
 ## The version string lives in exactly two files
 
 Both must be bumped together and kept identical:
