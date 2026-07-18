@@ -433,6 +433,20 @@ class PollConfigTests(unittest.TestCase):
         d, _ = run_hook("mytool status", config=cfg)
         self.assertIsNone(d)
 
+    def test_exempt_watch_pattern_silences_builtin(self):
+        # A built-in watch that would normally ask is quieted when its
+        # segment matches an exempt allowlist entry.
+        cfg = {"poll": {"exempt_watch_patterns": [r"^gh\s+run\s+watch\b"]}}
+        d, _ = run_hook("gh run watch 456", config=cfg)
+        self.assertIsNone(d)
+
+    def test_exempt_watch_pattern_does_not_silence_others(self):
+        # The allowlist wins only for matching segments; unlisted watches
+        # still prompt.
+        cfg = {"poll": {"exempt_watch_patterns": [r"^gh\s+run\s+watch\b"]}}
+        d, _ = run_hook("tail -f app.log", config=cfg)
+        self.assertEqual(d, "ask")
+
     def test_hint_appended(self):
         d, r = run_hook("gh run watch 123",
                         config={"hint": "pr-sentinel watches PRs here"})
