@@ -279,8 +279,9 @@ FOREGROUND_GUARD_OVERRIDE=demo-needs-live-tail tail -f app.log
 ```
 
 Mirroring prod-guard's semantics: the override downgrades **deny → ask** —
-it never silently allows. The reason string is for the human reviewing the
-prompt; make it say why the foreground wait is required.
+it never silently allows. The reason string is echoed back in the downgrade
+prompt for the human reviewing it (an audit trail, mirroring
+workspace-guard); make it say why the foreground wait is required.
 
 ## Soundness: never `allow`
 
