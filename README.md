@@ -26,10 +26,10 @@ of main-thread time-wasters:
   `tail -f`, `watch ...`), shell loops that poll with `sleep`, chained
   repeat-with-sleep sequences, and bare `sleep N` waits at or above a
   configurable floor.
-- **Class B — slow command with an inadequate timeout** (`ask`): a command
-  the repo has registered as needing more than the Bash call's timeout —
-  about to be killed mid-run. The registry ships **empty**; slow-command
-  knowledge is per-repo config.
+- **Class B — slow command with an inadequate timeout** (`ask` by default;
+  config may escalate to `deny`): a command the repo has registered as
+  needing more than the Bash call's timeout — about to be killed mid-run.
+  The registry ships **empty**; slow-command knowledge is per-repo config.
 
 Everything else passes through silently, so your normal permissions apply.
 
@@ -59,7 +59,7 @@ The hook produces one of three outcomes per Bash call:
   the same call with `run_in_background: true`, or bound the wait explicitly
   with `timeout N ...`. Class B asks name the exact minimum: "set
   `timeout: 600000` on this Bash call, or run it in the background."
-- **deny** — only when the repo config escalates Class A to `deny` (or in
+- **deny** — only when config escalates a class to `deny` (or in
   `bypassPermissions` mode, where there is no one to answer an ask — the
   deny feeds the fix back so the agent self-corrects instead of stalling).
   Downgradable to `ask` with a `FOREGROUND_GUARD_OVERRIDE=<reason>` prefix.
@@ -208,7 +208,8 @@ matches) instead of turning off all of Class A — see
 **Class B — slow-command registry** (config-only, ships empty): regex
 patterns mapped to a minimum timeout in ms. When a matched command would run
 in the foreground with the Bash call's `timeout` below the minimum (or unset
-— the 2-minute default), the guard asks and names the exact fix.
+— the 2-minute default), the guard prompts (`ask` by default; `slow.action`
+may escalate to `deny`) and names the exact fix.
 
 ## Exemptions
 
@@ -245,6 +246,7 @@ additively.
   },
   "slow": {
     "enabled": true,
+    "action": "ask",
     "commands": {
       "make test-race\\b": 600000,
       "make test-e2e\\b": 1800000,
@@ -263,6 +265,7 @@ additively.
 | `poll.exempt_watch_patterns` | `[]` | allowlist regexes over the same segment string; a match suppresses the watch/follow detection (exemptions win over matches) — quiet a false-positive built-in without disabling all of Class A |
 | `poll.sleep_floor_seconds` | `10` | bare `sleep N` prompts at or above this |
 | `slow.enabled` | `true` | Class B on/off |
+| `slow.action` | `"ask"` | `"deny"` escalates Class B to a hard block (override-able) |
 | `slow.commands` | `{}` | regex (searched in the raw command) → minimum timeout ms |
 | `hint` | `""` | repo-specific line appended to Class A prompts, naming your own watcher machinery |
 
@@ -311,8 +314,9 @@ prompts?" to trigger it.
 
 ## The override escape hatch
 
-When config escalates Class A to `deny`, a genuinely-intentional foreground
-wait can be downgraded to a confirmation prompt by prefixing the command:
+When config escalates a class to `deny`, a genuinely-intentional foreground
+wait (or short-timeout run) can be downgraded to a confirmation prompt by
+prefixing the command:
 
 ```
 FOREGROUND_GUARD_OVERRIDE=demo-needs-live-tail tail -f app.log

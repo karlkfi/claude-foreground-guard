@@ -18,8 +18,9 @@ Two classes of time-wasters, kept distinct in the code:
    (envtest suites, e2e runs, `-race` builds), about to run in the foreground
    with that default (or any timeout below the registered minimum). The tool
    will kill it before it finishes and the entire run is wasted. The guard
-   prompts (`ask`), naming the exact fix: `timeout: <min>` on the Bash call,
-   or `run_in_background: true`. The default registry is EMPTY — slow-command
+   prompts (`ask` by default; config may escalate to `deny`), naming the
+   exact fix: `timeout: <min>` on the Bash call, or
+   `run_in_background: true`. The default registry is EMPTY — slow-command
    knowledge is per-repo and lives in `.claude/foreground-guard.json`.
 
 Exemptions (pass untouched, both classes): `run_in_background: true`; a
@@ -91,6 +92,7 @@ def load_config():
         'exempt_watch_patterns': [],   # additive allowlist; suppresses matches
         'sleep_floor_seconds': DEFAULT_SLEEP_FLOOR_SECONDS,
         'slow_enabled': True,
+        'slow_action': 'ask',          # 'ask' | 'deny' (config may escalate)
         'slow_commands': {},           # {regex: min_timeout_ms}, additive
         'hint': '',                    # per-repo watcher-machinery hint
     }
@@ -123,6 +125,8 @@ def load_config():
         if isinstance(slow, dict):
             if isinstance(slow.get('enabled'), bool):
                 cfg['slow_enabled'] = slow['enabled']
+            if slow.get('action') in ('ask', 'deny'):
+                cfg['slow_action'] = slow['action']
             cmds = slow.get('commands')
             if isinstance(cmds, dict):
                 for pat, ms in cmds.items():
@@ -572,17 +576,23 @@ def finding_sleep(cfg, secs):
         'not ready, background the wait or come back next turn')
 
 
-def finding_slow(pattern, min_ms, timeout_ms, timeout_was_set):
+def finding_slow(cfg, pattern, min_ms, timeout_ms, timeout_was_set):
+    sev = DENY if cfg['slow_action'] == 'deny' else ASK
     cur = ('the %d ms timeout set on this call' % timeout_ms
            if timeout_was_set
            else 'the default %d ms timeout' % timeout_ms)
-    return (ASK,
-            'foreground-guard: this command matches the slow-command pattern '
-            '`%s`, registered as needing at least %d ms, but it would run in '
-            'the foreground with %s — the Bash tool will kill it before it '
-            'finishes and the whole run is wasted. Fix: set `timeout: %d` on '
-            'this Bash call, or run it with run_in_background: true. %s'
-            % (pattern, min_ms, cur, min_ms, CONFIG_HINT))
+    msg = ('foreground-guard: this command matches the slow-command pattern '
+           '`%s`, registered as needing at least %d ms, but it would run in '
+           'the foreground with %s — the Bash tool will kill it before it '
+           'finishes and the whole run is wasted. Fix: set `timeout: %d` on '
+           'this Bash call, or run it with run_in_background: true.'
+           % (pattern, min_ms, cur, min_ms))
+    if sev == DENY:
+        msg += (' If running with this timeout is genuinely intended, prefix '
+                'the command with FOREGROUND_GUARD_OVERRIDE=<reason> to '
+                'downgrade this block to a confirmation prompt.')
+    msg += ' ' + CONFIG_HINT
+    return (sev, msg)
 
 
 # ---------------------------------------------------------------------------
@@ -700,7 +710,7 @@ def analyze_class_b(raw, cfg, timeout_ms, timeout_was_set):
         except re.error:
             continue  # a broken pattern loses itself
         if rx.search(raw) and timeout_ms < min_ms:
-            findings.append(finding_slow(pat, min_ms, timeout_ms,
+            findings.append(finding_slow(cfg, pat, min_ms, timeout_ms,
                                          timeout_was_set))
     return findings
 
@@ -726,11 +736,12 @@ def main():
         return  # already backgrounded: exactly what the guard wants
 
     cfg = load_config()
-    findings = []
-    override = None
-
-    if cfg['poll_enabled']:
-        findings, override = analyze_class_a(command, cfg)
+    # Class A analysis always runs: it is also the only place the
+    # FOREGROUND_GUARD_OVERRIDE=<reason> prefix is parsed, and the override
+    # must still downgrade a Class B deny when poll is disabled.
+    findings, override = analyze_class_a(command, cfg)
+    if not cfg['poll_enabled']:
+        findings = []
 
     if cfg['slow_enabled'] and cfg['slow_commands']:
         timeout_ms = tool_input.get('timeout')

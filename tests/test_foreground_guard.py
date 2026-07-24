@@ -539,6 +539,51 @@ class SlowCommandTests(unittest.TestCase):
         self.assertEqual(d, "ask")
 
 
+SLOW_DENY_CFG = {"slow": {"action": "deny",
+                          "commands": {r"make test-race\b": 600000}}}
+
+
+class SlowConfigTests(unittest.TestCase):
+    def test_action_escalates_to_deny(self):
+        d, r = run_hook("make test-race", config=SLOW_DENY_CFG)
+        self.assertEqual(d, "deny")
+        self.assertIn("FOREGROUND_GUARD_OVERRIDE", r)
+
+    def test_default_action_stays_ask(self):
+        d, r = run_hook("make test-race", config=SLOW_CFG)
+        self.assertEqual(d, "ask")
+        self.assertNotIn("FOREGROUND_GUARD_OVERRIDE", r)
+
+    def test_invalid_action_stays_ask(self):
+        cfg = {"slow": {"action": "block",
+                        "commands": {r"make test-race\b": 600000}}}
+        d, _ = run_hook("make test-race", config=cfg)
+        self.assertEqual(d, "ask")
+
+    def test_override_downgrades_deny_to_ask(self):
+        d, r = run_hook("FOREGROUND_GUARD_OVERRIDE=ci-debug make test-race",
+                        config=SLOW_DENY_CFG)
+        self.assertEqual(d, "ask")
+        self.assertIn("override acknowledged", r)
+        self.assertIn("ci-debug", r)
+
+    def test_override_works_with_poll_disabled(self):
+        # The override prefix is parsed by Class A analysis; it must still
+        # downgrade a Class B deny when poll is switched off entirely.
+        cfg = {"poll": {"enabled": False},
+               "slow": {"action": "deny",
+                        "commands": {r"make test-race\b": 600000}}}
+        d, r = run_hook("FOREGROUND_GUARD_OVERRIDE=ci-debug make test-race",
+                        config=cfg)
+        self.assertEqual(d, "ask")
+        self.assertIn("override acknowledged", r)
+
+    def test_deny_with_adequate_timeout_defers(self):
+        d, _ = run_hook("make test-race", config=SLOW_DENY_CFG,
+                        timeout_ms=600000)
+        self.assertIsNone(d)
+
+
 # ---------------------------------------------------------------------------
 # Robustness
 # ---------------------------------------------------------------------------
